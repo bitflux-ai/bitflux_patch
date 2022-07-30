@@ -149,9 +149,18 @@ def install_collector(args, configs, installer_options, installer_config):
         ansible_bitflux_install(configs, "install_bitflux.yml", args, installer_config, installer_options)
 
 
-def do_check_packages(configs, args, params, expected):
+def check_build_style(configs, args):
     exitcode, out, err = do_ansible_adhoc(configs, args, "cat /etc/redhat-release")
-    build_style = 'redhat' if exitcode == 0 else 'debian'
+    if exitcode == 0:
+        return 'redhat'
+    exitcode, out, err = do_ansible_adhoc(configs, args, "cat /etc/system-release")
+    if exitcode == 0:
+        return 'amazon'
+    return 'debian'
+
+
+def do_check_packages(configs, args, params, expected):
+    build_style = check_build_style(configs, args)
     exitcode, out, err = do_ansible_adhoc(configs, args, params[build_style]['cmd'])
     if exitcode != 0:
         print("exitcode: {}".format(exitcode))
@@ -160,6 +169,8 @@ def do_check_packages(configs, args, params, expected):
         sys.stdout.flush()
     m = re.findall(params[build_style]['re'], out)
     actual = m[-1]
+    print(m)
+    print("stdout: '{}'".format(out))
     if expected != actual:
         print("actual: {} expected: {}".format(actual, expected))
         return 1
@@ -173,6 +184,10 @@ def check_packages(configs, args):
                 're': r'\S+\s+(\S+)',
                 'cmd': "dnf list installed kernel-swaphints"
             },
+            'amazon': {
+                're': r'\S+\s+\S+\s+(\S+)',
+                'cmd': "yum list installed kernel-swaphints"
+            },
             'debian': {
                 're': r'\S+\s+(\S+)\s+\S+\s+\[installed',
                 'cmd': "apt list linux-image-swaphints -a"
@@ -183,6 +198,10 @@ def check_packages(configs, args):
             'redhat': {
                 're': r'\S+\s+([0-9\.\-]+)',
                 'cmd': "dnf list installed bitfluxcollector"
+            },
+            'amazon': {
+                're': r'\S+\s+([0-9\.\-]+)',
+                'cmd': "yum list installed bitfluxcollector"
             },
             'debian': {
                 're': r'\S+\s+([0-9\.\-]+)+\s+\S+\s+\[installed',
@@ -373,6 +392,9 @@ if __name__ == '__main__':
 
     # Install collector packages
     install_collector(args, configs, installer_options, installer_config)
+
+    # Create swapfile if necessary
+    do_ansible(configs, "set_swapfile.yml", args)
 
     # Some modes don't autoload module
     if args.manual_modprobe:

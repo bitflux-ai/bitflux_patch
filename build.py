@@ -18,9 +18,9 @@ class KernelBuilder:
     def __init__(self, config):
         self.config = config
 
-    def run_cmd(self, cmd, verbose=None, live_output=True):
+    def run_cmd(self, cmd, verbose=None, live_output=True, no_stdout=False):
         lverbose = verbose if verbose is not None else self.config['verbose']
-        return run_cmd(cmd, verbose=lverbose, live_output=live_output)
+        return run_cmd(cmd, verbose=lverbose, live_output=live_output, no_stdout=no_stdout)
 
     def build(self):
         self.build_docker_image()
@@ -47,13 +47,14 @@ class KernelBuilder:
         template_path = os.path.join(self.config['basedir'], 'scripts', 'Dockerfile.j2')
         output_path = os.path.join(self.config['basedir'], 'Dockerfile')
         compile_j2_template(template_path, output_path, self.config)
-        self.run_cmd("docker pull {}".format(self.config['docker_image']))
+        if self.config.get('nopull', None) is None:
+            self.run_cmd("docker pull {}".format(self.config['docker_image']))
         self.run_cmd("docker rm --force {}".format(self.config['container_name']))
         self.run_cmd("docker rmi --force {}".format(self.config['image_name']))
         self.run_cmd("docker build -f Dockerfile . --tag {}".format(self.config['image_name']))
         self.run_cmd("rm -f Dockerfile")
 
-    def run_docker(self, script):
+    def run_docker(self, script, no_stdout=False):
         cmd = "docker run"
         cmd += " --privileged"
         cmd += " --name {}".format(self.config['container_name'])
@@ -66,20 +67,23 @@ class KernelBuilder:
         cmd += " {}".format(self.config['image_name'])
         cmd += " python3 {}".format(script)
         for k,v in self.config['settings'].items():
-            cmd += " --{} {}".format(k,v)
-        self.run_cmd(cmd)
+            if v is True:
+                cmd += " --{}".format(k)
+            else:
+                cmd += " --{} {}".format(k,v)
+        self.run_cmd(cmd, no_stdout=no_stdout)
 
     def build_kernel_package(self):
         print("==============================================================================")
         print("=== BUILD KERNEL PACKAGE =====================================================")
         print("==============================================================================")
-        self.run_docker("./scripts/build_kernel_package.py")
+        self.run_docker("./scripts/build_kernel_package.py", no_stdout=True)
 
     def check_kernel_package(self):
         print("==============================================================================")
         print("=== CHECK KERNEL PACKAGE =====================================================")
         print("==============================================================================")
-        self.run_docker("./scripts/check_package.py")
+        self.run_docker("./scripts/check_package.py", no_stdout=True)
 
     def copy_output_from_container(self):
         print("==============================================================================")
@@ -123,6 +127,7 @@ if __name__ == '__main__':
     parser.add_argument('--checkonly', help='Return the kernel package name', action='store_true')
     parser.add_argument('--verbose', help='Verbose mode - DEBUG', action='store_true')
     parser.add_argument('--dumpall', help='Dump everything from the container - DEBUG', action='store_true')
+    parser.add_argument('--nopull', help="Use local docker images, don't pull - DEBUG", action='store_true')
     parser.add_argument('--nobuild', help="Don't build - DEBUG", action='store_true')
     parser.add_argument('--clean', help='Extra clean up steps - DEBUG', action='store_true')
     parser.add_argument('--settings', help='Overrides for building in escaped json', type=str)
@@ -136,6 +141,8 @@ if __name__ == '__main__':
     config['verbose'] = args.verbose
     if args.dumpall:
         config['dumpall'] = args.dumpall
+    if args.nopull:
+        config['nopull'] = args.nopull
     if args.settings is None:
         config['settings'] = {}
     else:
@@ -154,6 +161,8 @@ if __name__ == '__main__':
     else:
         config['docker_image'] = config['settings']['docker_image']
         del config['settings']['docker_image']
+
+    print(config)
 
     # Only check for kernel
     if args.checkonly:
